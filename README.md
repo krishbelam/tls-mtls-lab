@@ -39,3 +39,7 @@ The guide's "SSLContext map" tab predicts each outcome.
 - Lab only. Keys are generated locally and git-ignored. Never commit them.
 - Requires OpenSSL 3.x and Python 3.10+. Python 3.13+ enables `VERIFY_X509_STRICT`
   in `ssl.create_default_context()`, which is why the cert extensions matter.
+
+
+## License
+Licensed under the [Apache License 2.0](LICENSE).
