@@ -1,0 +1,13 @@
+# Private keys and generated certificate material. Regenerate with scripts/gen_certs.sh
+*.key
+*.crt
+*.csr
+*.srl
+*.ext
+*.cnf
+*.pem
+*.p12
+*.pfx
+
+__pycache__/
+.venv/
