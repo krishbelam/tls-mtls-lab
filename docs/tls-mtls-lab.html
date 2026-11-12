@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TLS / mTLS lab</title>
+<style>
+:root{--bg:#fff;--fg:#1f1f1c;--mute:#6b6a64;--card:#f6f5f1;--bd:#d9d7cf;--ac:#0f6e56;--bad:#b3261e;--warn:#9a6700;--code:#12201c;--codefg:#d7f5e9;--dim:#6f8a80;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#1c1c1a;--fg:#ecebe5;--mute:#a3a198;--card:#262624;--bd:#3d3c38;--ac:#5dcaa5;--bad:#f2a49e;--warn:#e8c26a;--code:#101412;--codefg:#c9f0df;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0 auto;max-width:900px;padding:18px;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
+h1{font-size:24px;font-weight:500;margin:0 0 2px}h2{font-size:18px;font-weight:500;margin:22px 0 8px}
+.sub{color:var(--mute);margin:0 0 12px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid var(--bd);padding-bottom:10px;margin-bottom:14px}
+.tabs button{border-radius:99px}.tabs button.on{background:var(--ac);color:var(--bg)}
+.panel{display:none}.panel.on{display:block}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.card,.ctl{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px 14px}
+.card b{font-weight:500;color:var(--ac)}.card span{display:block;color:var(--mute);font-size:14px}
+.ctl{display:flex;flex-wrap:wrap;gap:12px 16px;align-items:center;margin-bottom:8px}
+label.f{display:block;font-size:13px;color:var(--mute)}
+label.c{font-size:14px;display:flex;gap:6px;align-items:center}
+input[type=text],input[type=number],select{width:100%;padding:7px 9px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit;font-size:15px}
+.ctl select{width:auto}
+button{padding:7px 14px;border:1px solid var(--ac);border-radius:8px;background:transparent;color:var(--ac);font:inherit;font-size:14px;cursor:pointer}
+pre{background:var(--code);color:var(--codefg);padding:14px;border-radius:12px;overflow-x:auto;font:13px/1.55 ui-monospace,Menlo,Consolas,monospace;margin:8px 0}
+.off{color:var(--dim)}
+table{border-collapse:collapse;width:100%;font-size:14px}.tw{overflow-x:auto}
+th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--bd);vertical-align:top}
+th{font-weight:500;color:var(--mute)}
+code{font:13px ui-monospace,Menlo,Consolas,monospace;background:var(--card);padding:1px 5px;border-radius:4px}
+.pill{display:inline-block;padding:2px 9px;border-radius:99px;border:1px solid var(--bd);background:var(--card);font:13px ui-monospace,Menlo,Consolas,monospace;margin:2px 4px 2px 0}
+.pill.no{text-decoration:line-through;color:var(--mute)}
+.ok{color:var(--ac)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+.ok,.bad,.warn{font-weight:500}.res div{margin:4px 0;font-size:14px}
+.row{margin:6px 0}.note{color:var(--mute);font-size:14px}summary{cursor:pointer;color:var(--ac);margin:8px 0}ol{padding-left:20px;font-size:14px}li{margin:5px 0}.mt{color:var(--warn);font-weight:500}
+</style>
+</head>
+<body>
+<h1>TLS / mTLS lab</h1>
+<p class="sub">Keys, certificates, extensions and Python SSLContext in one place. Change a control and the output updates.</p>
+<div class="tabs" id="tabs">
+<button data-t="p1" class="on">Concepts</button><button data-t="p6">TLS vs mTLS</button><button data-t="p2">Script builder</button><button data-t="p3">Extensions lab</button><button data-t="p4">SSLContext map</button><button data-t="p5">Reference</button>
+</div>
+
+<div class="panel on" id="p1">
+<div class="grid">
+<div class="card"><b>Private key</b><span>Secret. Signs and decrypts. Proves “I am me”.</span></div>
+<div class="card"><b>Public key</b><span>Derived from the private key. Safe to share. Verifies signatures.</span></div>
+<div class="card"><b>CSR</b><span>Public key + name, signed by the private key (proof of possession). The key is never sent.</span></div>
+<div class="card"><b>Certificate (.crt)</b><span>Public key + identity + dates, signed by a CA.</span></div>
+<div class="card"><b>CA</b><span>Trusted signer. Everyone holds <code>ca.crt</code>. Only the signer uses <code>ca.key</code>.</span></div>
+<div class="card"><b>mTLS</b><span>Both sides present certs and verify them against the CA.</span></div>
+<div class="card"><b>Extensions</b><span>Rules inside a cert: is it a CA, what may the key do, which names are valid.</span></div>
+<div class="card"><b>Proxy vs app</b><span>Usually the proxy verifies; the app reads identity from trusted headers.</span></div>
+</div>
+<p class="note">Rule of thumb: <code>.crt</code> is public and is what you present or trust. <code>.key</code> is secret and only signs locally.</p>
+</div>
+
+<div class="panel" id="p2">
+<div class="grid">
+<div><label class="f">Key type</label><select id="alg"><option value="2048">RSA 2048</option><option value="3072">RSA 3072</option><option value="4096">RSA 4096</option><option value="ec">ECDSA P-256</option></select></div>
+<div><label class="f">Server hostname</label><input type="text" id="host" value="localhost"></div>
+<div><label class="f">Extra SAN IPs</label><input type="text" id="ips" value="127.0.0.1"></div>
+<div><label class="f">Leaf days</label><input type="number" id="days" value="365"></div>
+<div><label class="f">Port</label><input type="number" id="port" value="8443"></div>
+</div>
+<h2>CSR subject (distinguished name)</h2>
+<div class="ctl"><label class="c">Edit subject for <select id="dnEnt"><option value="ca">CA</option><option value="server">Server</option><option value="client">Client</option></select></label><span class="note">Empty fields are left out of the subject.</span></div>
+<div class="grid" id="dnGrid"></div>
+<pre id="dnPrev"></pre>
+<details><summary>Subject fields reference</summary>
+<div class="tw"><table>
+<tr><th>Field</th><th>Meaning</th><th>Example</th><th>Note</th></tr>
+<tr><td><code>C</code></td><td>Country</td><td>IN</td><td>Exactly 2 letters (ISO 3166)</td></tr>
+<tr><td><code>ST</code></td><td>State or province</td><td>Telangana</td><td></td></tr>
+<tr><td><code>L</code></td><td>Locality / city</td><td>Hyderabad</td><td></td></tr>
+<tr><td><code>O</code></td><td>Organization</td><td>Acme Ltd</td><td>Kubernetes RBAC reads O as the group</td></tr>
+<tr><td><code>OU</code></td><td>Organizational unit</td><td>Platform</td><td>Often omitted</td></tr>
+<tr><td><code>CN</code></td><td>Common name</td><td>alice</td><td>The identity (user name). For hostnames only the SAN counts</td></tr>
+<tr><td><code>emailAddress</code></td><td>Email</td><td>a@acme.com</td><td>Prefer a SAN email</td></tr>
+<tr><td><code>DC</code></td><td>Domain component</td><td>/DC=com/DC=acme</td><td>Repeatable</td></tr>
+<tr><td><code>UID</code></td><td>User ID</td><td>1001</td><td></td></tr>
+<tr><td><code>serialNumber</code></td><td>ID string</td><td>12345</td><td>Not the cert serial</td></tr>
+</table></div>
+<p class="note">Format: <code>/C=IN/ST=Telangana/CN=alice</code>. Each field starts with <code>/</code>; a literal slash inside a value is written <code>\/</code>. Order is kept as written.</p>
+</details>
+<details><summary>openssl req flags reference</summary>
+<div class="tw"><table>
+<tr><th>Flag</th><th>Purpose</th></tr>
+<tr><td><code>-new</code></td><td>Create a CSR</td></tr>
+<tr><td><code>-key f</code></td><td>Use an existing private key</td></tr>
+<tr><td><code>-newkey rsa:2048 -keyout f</code></td><td>Generate key and CSR in one step</td></tr>
+<tr><td><code>-nodes</code> / <code>-noenc</code></td><td>Do not encrypt the key (<code>-noenc</code> on OpenSSL 3.x)</td></tr>
+<tr><td><code>-subj</code></td><td>Subject on the command line, skips prompts</td></tr>
+<tr><td><code>-config f</code></td><td>Read subject and extensions from a file (use <code>prompt = no</code>)</td></tr>
+<tr><td><code>-addext "subjectAltName=..."</code></td><td>Put the SAN into the CSR (1.1.1+)</td></tr>
+<tr><td><code>-reqexts sect</code></td><td>Choose the extension section in the config</td></tr>
+<tr><td><code>-sha256</code></td><td>Digest used to sign the CSR</td></tr>
+<tr><td><code>-x509</code></td><td>Output a self-signed cert instead of a CSR (CA)</td></tr>
+<tr><td><code>-verify</code>, <code>-text -noout</code></td><td>Check the CSR signature, print contents</td></tr>
+</table></div>
+<p class="note">Extensions inside a CSR are not copied by <code>openssl x509 -req</code> unless you add <code>-copy_extensions copy</code> (3.0+). The CA decides extensions, which is why this lab uses <code>-extfile</code>.</p>
+</details>
+<div class="ctl" style="margin-top:10px"><label class="c"><input type="checkbox" id="cfg"> CSR from config file (prompt = no)</label><label class="c"><input type="checkbox" id="ext" checked> Include recommended extensions (strict-safe)</label><button id="copy">Copy script</button><span class="ok" id="msg"></span></div>
+<pre id="out"></pre>
+<p class="note">Untick extensions, run it, and the strict verify step fails the way Python 3.13+ does by default.</p>
+</div>
+
+<div class="panel" id="p6">
+<div class="ctl"><label class="c">Mode <select id="fmode"><option value="tls">TLS (server authenticates)</option><option value="mtls">mTLS (both authenticate)</option></select></label><span class="note">Orange = extra mTLS steps. TLS 1.3 flow.</span></div>
+<div id="fsvg"></div>
+<div class="row"><b>Server holds:</b> <span id="ffs"></span></div>
+<div class="row"><b>Client holds:</b> <span id="ffc"></span></div>
+<h2>Step by step</h2>
+<ol id="fsteps"></ol>
+<h2>How they differ</h2>
+<div class="tw"><table>
+<tr><th></th><th>TLS</th><th>mTLS</th></tr>
+<tr><td>Who proves identity</td><td>Server only</td><td>Server and client</td></tr>
+<tr><td>Client cert</td><td>Not needed</td><td>Required (<code>client.crt</code> + <code>client.key</code>)</td></tr>
+<tr><td>Extra messages</td><td>None</td><td>CertificateRequest, client Certificate, client CertificateVerify</td></tr>
+<tr><td>Server needs</td><td><code>server.crt</code>, <code>server.key</code></td><td>Plus <code>ca.crt</code> and <code>verify_mode = CERT_REQUIRED</code></td></tr>
+<tr><td>Client needs</td><td><code>ca.crt</code></td><td>Plus <code>client.crt</code>, <code>client.key</code></td></tr>
+<tr><td>Client identity</td><td>Password, token or API key at the app layer</td><td>Cert subject or SAN, known at connection time</td></tr>
+<tr><td>Typical use</td><td>Websites, public APIs</td><td>Service to service, brokers, zero trust</td></tr>
+<tr><td>Typical errors</td><td><code>unable to get local issuer certificate</code></td><td>Also <code>certificate required</code>, <code>unknown ca</code></td></tr>
+<tr><td>Cost</td><td>One chain verification</td><td>Verification on both sides plus client cert lifecycle</td></tr>
+</table></div>
+<p class="note">TLS 1.2 differs in detail (certificates are sent unencrypted, plus ServerKeyExchange), but the one-way versus mutual idea is the same.</p>
+</div>
+
+<div class="panel" id="p3">
+<div class="ctl"><label class="c">Certificate type <select id="etype"><option value="ca">CA</option><option value="server">Server leaf</option><option value="client">Client leaf</option></select></label><span class="note">Untick an extension to see what breaks.</span></div>
+<div class="grid" id="elist"></div>
+<h2>Predicted result of <code>openssl verify -x509_strict</code></h2>
+<div class="res" id="eres"></div>
+<h2>Extension file</h2>
+<pre id="efile"></pre>
+<div class="tw"><table>
+<tr><th>Extension</th><th>Why</th></tr>
+<tr><td><code>basicConstraints</code></td><td>Says CA or not. <code>critical</code> means a verifier that does not understand it must reject the cert.</td></tr>
+<tr><td><code>keyUsage</code></td><td>What the key may do: <code>digitalSignature</code> for handshakes, <code>keyCertSign</code> for CAs, <code>keyEncipherment</code> only for RSA key exchange.</td></tr>
+<tr><td><code>extendedKeyUsage</code></td><td>Role: <code>serverAuth</code> or <code>clientAuth</code>. Wrong role gives “unsupported certificate purpose”.</td></tr>
+<tr><td><code>subjectAltName</code></td><td>Names the client matches against. The CN is ignored.</td></tr>
+<tr><td><code>subjectKeyIdentifier</code> / <code>authorityKeyIdentifier</code></td><td>Fingerprint of this key / of the signing key. They link a cert to its issuer; strict mode requires them.</td></tr>
+</table></div>
+<p class="note">Extensions come from the signer (<code>-extfile</code>), not from the CSR. Create the CA with its own SKI first, because the leaf AKI <code>keyid</code> copies it.</p>
+</div>
+
+<div class="panel" id="p4">
+<div class="tw"><table>
+<tr><th>Server code</th><th>File</th><th>Meaning</th></tr>
+<tr><td><code>load_cert_chain(certfile, keyfile)</code></td><td><code>server.crt</code> + <code>server.key</code></td><td>Who I am (present, sign)</td></tr>
+<tr><td><code>load_verify_locations(cafile)</code></td><td><code>ca.crt</code> only</td><td>Whom I trust for client certs</td></tr>
+<tr><td><code>verify_mode</code></td><td>none</td><td>NONE, OPTIONAL or REQUIRED</td></tr>
+<tr><td><code>check_hostname</code></td><td>none</td><td>Client-side only</td></tr>
+</table></div>
+<p class="note">Client mirror: <code>--cacert</code> / <code>verify=</code> pairs with <code>load_verify_locations</code>. <code>--cert --key</code> / <code>cert=(crt,key)</code> pairs with <code>load_cert_chain</code>.</p>
+<div class="ctl" style="margin-top:10px">
+<label class="c"><input type="checkbox" id="chain" checked> load_cert_chain</label>
+<label class="c"><input type="checkbox" id="ca"> load_verify_locations</label>
+<label class="c">verify_mode <select id="mode"><option value="none">CERT_NONE</option><option value="optional">CERT_OPTIONAL</option><option value="required">CERT_REQUIRED</option></select></label>
+<label class="c"><input type="checkbox" id="ctrust" checked> client uses <code>--cacert</code></label>
+<label class="c"><input type="checkbox" id="strict" checked> VERIFY_X509_STRICT</label>
+<label class="c"><input type="checkbox" id="hasext" checked> certs have extensions</label>
+</div>
+<pre id="code"></pre>
+<div class="row"><b>Server needs:</b> <span id="sfiles"></span></div>
+<div class="row"><b>Client needs:</b> <span id="cfiles"></span></div>
+<div class="row"><b>Never in the app:</b> <span class="pill no">ca.key</span><span class="pill no">*.csr</span></div>
+<div class="tw"><table id="sres"></table></div>
+</div>
+
+<div class="panel" id="p5">
+<h2>Why a command fails</h2>
+<div class="tw"><table>
+<tr><th>Error</th><th>Cause</th><th>Fix</th></tr>
+<tr><td><code>ee key too small</code></td><td>Key under 2048 bits</td><td>Regenerate key, CSR, cert</td></tr>
+<tr><td><code>unable to get local issuer certificate</code></td><td>Verifier lacks the CA cert</td><td><code>--cacert</code> / <code>-CAfile</code></td></tr>
+<tr><td><code>certificate required</code></td><td>Server wants a client cert</td><td><code>--cert --key</code></td></tr>
+<tr><td><code>unknown ca</code></td><td>Server does not trust the cert issuer</td><td><code>load_verify_locations(ca.crt)</code></td></tr>
+<tr><td>Hostname mismatch</td><td>No matching SAN</td><td>Add <code>subjectAltName</code></td></tr>
+<tr><td><code>Missing Authority Key Identifier</code></td><td>Strict mode, leaf lacks AKI</td><td>Add AKI, CA needs SKI</td></tr>
+<tr><td><code>CA cert does not include key usage</code></td><td>Strict mode, CA lacks keyCertSign</td><td>Rebuild CA with extensions</td></tr>
+<tr><td><code>key values mismatch</code></td><td>Key not for this cert</td><td>Compare pubkey hashes</td></tr>
+<tr><td><code>certificate has expired</code></td><td>Past notAfter</td><td>Reissue, check clock</td></tr>
+</table></div>
+<h2>Inspect</h2>
+<pre>openssl x509 -in c.crt -noout -text
+openssl x509 -in c.crt -noout -ext basicConstraints,keyUsage,extendedKeyUsage,subjectAltName
+openssl req  -in r.csr -noout -text -verify
+openssl verify -x509_strict -CAfile ca.crt c.crt
+openssl x509 -in c.crt -noout -pubkey | sha256sum     # compare with:
+openssl pkey -in k.key -pubout | sha256sum
+openssl s_client -connect host:443 -servername host -showcerts</pre>
+<h2>Key formats</h2>
+<div class="tw"><table>
+<tr><th>Header</th><th>Format</th><th>Convert</th></tr>
+<tr><td><code>BEGIN PUBLIC KEY</code></td><td>PEM SPKI</td><td><code>openssl pkey -in k -pubout</code></td></tr>
+<tr><td><code>ssh-rsa AAAA...</code></td><td>OpenSSH public</td><td><code>ssh-keygen -y -f k</code></td></tr>
+<tr><td><code>BEGIN RSA PRIVATE KEY</code></td><td>PKCS#1</td><td><code>openssl pkey -in k -out k8</code></td></tr>
+<tr><td><code>BEGIN PRIVATE KEY</code></td><td>PKCS#8</td><td><code>openssl rsa -in k -traditional</code></td></tr>
+<tr><td><code>BEGIN OPENSSH PRIVATE KEY</code></td><td>OpenSSH private</td><td><code>ssh-keygen -p -m PKCS8 -f k</code></td></tr>
+</table></div>
+<pre>ssh-keygen -e -m PKCS8 -f key.ssh.pub     # OpenSSH pub to PEM
+ssh-keygen -i -m PKCS8 -f key.pub         # PEM to OpenSSH pub</pre>
+</div>
+
+<script>
+const $=i=>document.getElementById(i);
+document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("#tabs button,.panel").forEach(e=>e.classList.remove("on"));
+  b.classList.add("on");$(b.dataset.t).classList.add("on")});
+const q=s=>String(s).replace(/["\\$`]/g,"\\$&");
+
+/* ---- Script builder ---- */
+const FLD=[["C","Country (2 letters)"],["ST","State / province"],["L","Locality / city"],["O","Organization"],["OU","Org unit"],["CN","Common name"],["emailAddress","Email"]];
+const DN={ca:{C:"IN",ST:"Telangana",L:"Hyderabad",O:"Lab",OU:"",CN:"My Test CA",emailAddress:""},server:{C:"IN",ST:"Telangana",L:"Hyderabad",O:"Lab",OU:"",CN:"",emailAddress:""},client:{C:"IN",ST:"Telangana",L:"Hyderabad",O:"engineers",OU:"",CN:"alice",emailAddress:""}};
+const pairs=(e,h)=>FLD.map(([k])=>[k,k==="CN"&&e==="server"&&!DN[e].CN?h:DN[e][k]]).filter(p=>p[1]);
+const subjStr=(e,h)=>"/"+pairs(e,h).map(([k,v])=>k+"="+String(v).replace(/[\\\/]/g,"\\$&")).join("/");
+function dnShow(fill){
+  const e=$("dnEnt").value,h=$("host").value||"localhost";
+  $("dnGrid").querySelectorAll("input").forEach(i=>{if(fill)i.value=DN[e][i.dataset.k];i.placeholder=(e==="server"&&i.dataset.k==="CN")?h:""});
+  const c=DN[e].C;
+  $("dnPrev").textContent=`-subj "${subjStr(e,h)}"`+(c&&c.length!==2?"\n# warning: C must be a 2-letter country code":"");
+}
+function dnInit(){
+  const g=$("dnGrid");
+  g.innerHTML=FLD.map(([k,l])=>`<div><label class="f">/${k} ${l}</label><input type="text" data-k="${k}"></div>`).join("");
+  g.querySelectorAll("input").forEach(i=>i.oninput=()=>{DN[$("dnEnt").value][i.dataset.k]=i.value.trim();dnShow(false);br()});
+  $("dnEnt").oninput=()=>dnShow(true);
+  dnShow(true);
+}
+dnInit();
+function build(){
+  const a=$("alg").value,ec=a==="ec",host=q($("host").value||"localhost"),d=+$("days").value||365,p=+$("port").value||8443,x=$("ext").checked,cf=$("cfg").checked;
+  const key=f=>ec?`openssl ecparam -name prime256v1 -genkey -noout -out ${f}.key`:`openssl genrsa -out ${f}.key ${a}`;
+  const san=["DNS:"+host,...$("ips").value.split(",").map(s=>s.trim()).filter(Boolean).map(s=>"IP:"+s)].join(",");
+  const H=$("host").value||"localhost";
+  const csr=e=>{
+    if(!cf)return{pre:"",args:`-subj "${q(subjStr(e,H))}"`};
+    const sv=e==="server";
+    return{pre:`cat > ${e}.cnf <<'EOF'\n[req]\ndistinguished_name = dn\nprompt = no\n`+(sv?"req_extensions = v3\n":"")+"[dn]\n"+pairs(e,H).map(([k,v])=>k+" = "+v).join("\n")+"\n"+(sv?"[v3]\nsubjectAltName = "+san+"\n":"")+"EOF\n",args:`-config ${e}.cnf`};
+  };
+  const C={ca:csr("ca"),server:csr("server"),client:csr("client")};
+  const sext=x?`basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature${ec?"":",keyEncipherment"}
+extendedKeyUsage = serverAuth
+subjectAltName = ${san}
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer`:`subjectAltName = ${san}
+extendedKeyUsage = serverAuth`;
+  const cext=x?`basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature
+extendedKeyUsage = clientAuth
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer`:`extendedKeyUsage = clientAuth`;
+  const caAdd=x?` \\
+  -addext "basicConstraints=critical,CA:TRUE" \\
+  -addext "keyUsage=critical,keyCertSign,cRLSign" \\
+  -addext "subjectKeyIdentifier=hash"`:"";
+  return `# 1. CA (ca.key never leaves this machine)
+${key("ca")}
+${C.ca.pre}openssl req -x509 -new -nodes -key ca.key -sha256 -days 3650 \\
+  ${C.ca.args}${caAdd} -out ca.crt
+
+# 2. Server
+${key("server")}
+${C.server.pre}openssl req -new -key server.key ${C.server.args} -out server.csr
+cat > server.ext <<'EOF'
+${sext}
+EOF
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \\
+  -days ${d} -sha256 -extfile server.ext -out server.crt
+
+# 3. Client
+${key("client")}
+${C.client.pre}openssl req -new -key client.key ${C.client.args} -out client.csr
+cat > client.ext <<'EOF'
+${cext}
+EOF
+openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial \\
+  -days ${d} -sha256 -extfile client.ext -out client.crt
+
+# 4. Verify (strict = Python 3.13+ default behaviour)
+openssl verify -x509_strict -CAfile ca.crt server.crt client.crt
+
+# 5. mTLS server (terminal 1)
+openssl s_server -accept ${p} -cert server.crt -key server.key \\
+  -CAfile ca.crt -Verify 1 -www
+
+# 6. Test (terminal 2)
+curl --cert client.crt --key client.key --cacert ca.crt https://${host}:${p}   # works
+curl --cacert ca.crt https://${host}:${p}                                     # rejected`;
+}
+const br=()=>{$("out").textContent=build()};
+["alg","host","ips","days","port","ext","cfg"].forEach(i=>$(i).addEventListener("input",br));$("host").addEventListener("input",()=>dnShow(false));
+$("copy").onclick=async()=>{try{await navigator.clipboard.writeText($("out").textContent);$("msg").textContent="Copied"}catch(e){const r=document.createRange();r.selectNodeContents($("out"));const s=getSelection();s.removeAllRanges();s.addRange(r);$("msg").textContent="Selected, press Ctrl+C"}setTimeout(()=>$("msg").textContent="",2000)};
+br();
+
+/* ---- Extensions lab ---- */
+const EXT={
+ ca:[["basicConstraints = critical,CA:TRUE","bad","Invalid CA: it is not allowed to sign certificates"],
+     ["keyUsage = critical,keyCertSign,cRLSign","bad","Strict: CA cert does not include key usage (keyCertSign)"],
+     ["subjectKeyIdentifier = hash","bad","Strict: CA has no SKI, so leaf AKI keyid has nothing to copy"]],
+ server:[["basicConstraints = critical,CA:FALSE","warn","Cannot prove the leaf is not a CA; some verifiers reject"],
+     ["keyUsage = critical,digitalSignature,keyEncipherment","warn","Key usage unrestricted; strict policies may reject"],
+     ["extendedKeyUsage = serverAuth","warn","Valid for any purpose (too loose). A wrong role fails with unsupported purpose"],
+     ["subjectAltName = DNS:localhost,IP:127.0.0.1","bad","Hostname mismatch: the CN is ignored"],
+     ["subjectKeyIdentifier = hash","warn","Optional on leaves, helps chain building"],
+     ["authorityKeyIdentifier = keyid,issuer","bad","Strict: Missing Authority Key Identifier"]],
+ client:[["basicConstraints = critical,CA:FALSE","warn","Cannot prove the leaf is not a CA; some verifiers reject"],
+     ["keyUsage = critical,digitalSignature","warn","Key usage unrestricted; strict policies may reject"],
+     ["extendedKeyUsage = clientAuth","warn","Valid for any purpose (too loose). A wrong role fails with unsupported purpose"],
+     ["subjectKeyIdentifier = hash","warn","Optional on leaves, helps chain building"],
+     ["authorityKeyIdentifier = keyid,issuer","bad","Strict: Missing Authority Key Identifier"]]};
+function eBuild(){
+  const L=EXT[$("etype").value];
+  $("elist").innerHTML=L.map((e,i)=>`<label class="card c"><input type="checkbox" data-i="${i}" checked> <code>${e[0]}</code></label>`).join("");
+  $("elist").querySelectorAll("input").forEach(c=>c.oninput=eCalc);eCalc();
+}
+function eCalc(){
+  const t=$("etype").value,L=EXT[t],on=[...$("elist").querySelectorAll("input")].map(c=>c.checked);
+  const miss=L.filter((e,i)=>!on[i]);
+  $("eres").innerHTML=miss.length?miss.map(e=>`<div class="${e[1]}">${e[1]==="bad"?"Fails":"Warns"}: <span style="font-weight:400;color:var(--fg)">missing <code>${e[0].split(" ")[0]}</code> &rarr; ${e[2]}</span></div>`).join(""):`<div class="ok">Passes. Chain, role and name checks are satisfied.</div>`;
+  if(miss.some(e=>e[1]==="bad"))$("eres").innerHTML=`<div class="bad">Result: verification fails</div>`+$("eres").innerHTML;
+  const lines=L.filter((e,i)=>on[i]).map(e=>e[0]);
+  $("efile").textContent=t==="ca"
+   ?"# attach with -addext on `openssl req -x509`\n"+lines.map(l=>`-addext "${l.replace(/ /g,"")}"`).join(" \\\n")
+   :`cat > ${t}.ext <<'EOF'\n${lines.join("\n")}\nEOF\nopenssl x509 -req -in ${t}.csr -CA ca.crt -CAkey ca.key -CAcreateserial \\\n  -days 365 -sha256 -extfile ${t}.ext -out ${t}.crt`;
+}
+$("etype").oninput=eBuild;eBuild();
+
+/* ---- SSLContext map ---- */
+const cases=[["No client cert","curl --cacert ca.crt URL","none"],["Valid cert + key","curl --cacert ca.crt --cert client.crt --key client.key URL","valid"],["Valid cert, no key","curl --cacert ca.crt --cert client.crt URL","nokey"],["Cert from another CA","curl ... --cert rogue.crt --key rogue.key URL","rogue"]];
+function outcome(c,s){
+  if(!s.chain)return[0,"Server has no cert or key; handshake cannot start"];
+  if(!s.ctrust)return[0,"curl error 60: client cannot verify the server (missing ca.crt)"];
+  if(c==="nokey")return[0,"curl fails locally: it cannot sign without client.key"];
+  if(c==="none")return s.mode==="required"?[0,"alert certificate required"]:[1,"Works; server sees no client identity"];
+  if(s.mode==="none")return[1,"Works, but no cert was requested; getpeercert() is empty"];
+  if(c==="valid"){
+    if(!s.ca)return[0,"alert unknown ca: server never loaded ca.crt"];
+    if(s.strict&&!s.hasext)return[0,"Strict verify: Missing Authority Key Identifier / CA key usage"];
+    return[1,"Works; getpeercert() returns the client subject"]}
+  return[0,"alert unknown ca: issuer is not the trusted CA"];
+}
+const pills=l=>l.length?l.map(f=>`<span class="pill">${f}</span>`).join(""):"<em>nothing</em>";
+function sRender(){
+  const s={chain:$("chain").checked,ca:$("ca").checked,mode:$("mode").value,ctrust:$("ctrust").checked,strict:$("strict").checked,hasext:$("hasext").checked};
+  const L=[[1,"ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)"],[s.chain,'ctx.load_cert_chain("server.crt", "server.key")'],[s.ca,'ctx.load_verify_locations(cafile="ca.crt")'],[1,"ctx.verify_mode = ssl.CERT_"+s.mode.toUpperCase()],[!s.strict,"ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT"]];
+  $("code").innerHTML=L.map(([on,t])=>`<div class="${on?"":"off"}">${on?"":"# "}${t}</div>`).join("");
+  const sf=[];if(s.chain)sf.push("server.crt","server.key");if(s.ca)sf.push("ca.crt");$("sfiles").innerHTML=pills(sf);
+  const cf=[];if(s.ctrust)cf.push("ca.crt");if(s.mode!=="none")cf.push("client.crt","client.key");$("cfiles").innerHTML=pills(cf);
+  $("sres").innerHTML="<tr><th>Client call</th><th>Result</th><th>Why</th></tr>"+cases.map(([n,cmd,k])=>{const[o,w]=outcome(k,s);return`<tr><td><b>${n}</b><br><code>${cmd}</code></td><td class="${o?"ok":"bad"}">${o?"Works":"Fails"}</td><td>${w}</td></tr>`}).join("");
+}
+["chain","ca","mode","ctrust","strict","hasext"].forEach(i=>$(i).addEventListener("input",sRender));sRender();
+
+/* ---- TLS vs mTLS flow ---- */
+const FS=[
+["r","ClientHello",0,"Client offers TLS versions, ciphers and a key share."],
+["l","ServerHello",0,"Server picks the parameters. From here the handshake is encrypted."],
+["l","CertificateRequest",1,"mTLS only: the server asks the client to authenticate (verify_mode REQUIRED or OPTIONAL)."],
+["l","Certificate + CertificateVerify (server)",0,"Server sends server.crt and signs the handshake with server.key. The client checks the chain against ca.crt and the name against the SAN."],
+["l","Finished",0,"Server confirms the handshake."],
+["r","Certificate (client.crt)",1,"mTLS only: the client presents its certificate."],
+["r","CertificateVerify (client.key)",1,"mTLS only: the client signs the handshake with client.key, proving possession. The server verifies the chain with ca.crt."],
+["r","Finished",0,"Client confirms. Both sides now hold the session keys."],
+["b","Encrypted application data",0,"HTTP requests and responses flow."]];
+function flow(){
+  const m=$("fmode").value==="mtls",S=FS.filter(s=>m||!s[2]),h=76+S.length*42;
+  let g=`<svg viewBox="0 0 680 ${h}" width="100%" role="img"><title>${m?"mTLS":"TLS"} handshake</title><defs>`+
+   ["ac","warn"].map(c=>`<marker id="a${c}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke-width="1.5" style="stroke:var(--${c})"/></marker>`).join("")+"</defs>";
+  [["Client",40],["Server",500]].forEach(([n,x])=>g+=`<rect x="${x}" y="8" width="140" height="36" rx="8" style="fill:var(--card);stroke:var(--bd)"/><text x="${x+70}" y="31" text-anchor="middle" font-size="14" style="fill:var(--fg)">${n}</text>`);
+  [110,570].forEach(x=>g+=`<line x1="${x}" y1="44" x2="${x}" y2="${h-6}" stroke-dasharray="4 4" style="stroke:var(--bd)"/>`);
+  S.forEach((s,i)=>{
+    const y=82+i*42,c=s[2]?"warn":"ac",[a,b]=s[0]==="l"?[568,112]:[112,568];
+    g+=`<text x="340" y="${y-8}" text-anchor="middle" font-size="13" style="fill:var(--${c})">${i+1}. ${s[1]}</text><line x1="${a}" y1="${y}" x2="${b}" y2="${y}" stroke-width="1.5" style="stroke:var(--${c})" marker-end="url(#a${c})"${s[0]==="b"?` marker-start="url(#a${c})"`:""}/>`;
+  });
+  $("fsvg").innerHTML=g+"</svg>";
+  $("fsteps").innerHTML=S.map(s=>`<li${s[2]?' class="mt"':""}>${s[1]}: <span style="font-weight:400;color:var(--fg)">${s[3]}</span></li>`).join("");
+  $("ffs").innerHTML=pills(m?["server.crt","server.key","ca.crt"]:["server.crt","server.key"]);
+  $("ffc").innerHTML=pills(m?["ca.crt","client.crt","client.key"]:["ca.crt"]);
+}
+$("fmode").oninput=flow;flow();
+</script>
+</body>
+</html>
