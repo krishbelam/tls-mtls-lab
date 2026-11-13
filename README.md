@@ -40,6 +40,12 @@ The guide's "SSLContext map" tab predicts each outcome.
 - Requires OpenSSL 3.x and Python 3.10+. Python 3.13+ enables `VERIFY_X509_STRICT`
   in `ssl.create_default_context()`, which is why the cert extensions matter.
 
+## TLS & mTLS Handshake 
+### mTLS handshake:
+![TLS handshake](docs/images/mTLS-handshake.png)
+### TLS + mTLS handshake:
+![mTLS handshake](docs/images/TLS-mTLS-handshake.png)
+
 
 ## License
 Licensed under the [Apache License 2.0](LICENSE).
